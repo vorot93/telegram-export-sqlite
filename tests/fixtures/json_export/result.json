@@ -1,0 +1,123 @@
+{
+  "about": "Telegram Desktop export",
+  "chats": {
+    "about": "Exported chats",
+    "list": [
+      {
+        "name": "Family Chat",
+        "type": "private_group",
+        "id": 123456,
+        "messages": [
+          {
+            "id": 101,
+            "type": "message",
+            "date": "2025-02-12T08:37:48",
+            "date_unixtime": "1739349468",
+            "edited": "2025-02-12T08:40:00",
+            "edited_unixtime": "1739349600",
+            "from": "Alice",
+            "from_id": "user12345",
+            "reply_to_message_id": 100,
+            "text": [
+              {
+                "type": "plain",
+                "text": "Hello "
+              },
+              {
+                "type": "bold",
+                "text": "family "
+              },
+              {
+                "type": "text_link",
+                "text": "link",
+                "href": "https://example.com"
+              }
+            ],
+            "text_entities": [
+              {
+                "type": "plain",
+                "text": "Hello "
+              },
+              {
+                "type": "bold",
+                "text": "family "
+              },
+              {
+                "type": "text_link",
+                "text": "link",
+                "href": "https://example.com"
+              }
+            ],
+            "reactions": [
+              {
+                "type": "emoji",
+                "count": 2,
+                "emoji": "thumbs_up"
+              }
+            ],
+            "inline_bot_buttons": [
+              [
+                {
+                  "type": "url",
+                  "text": "Open",
+                  "data": "https://example.com"
+                }
+              ]
+            ]
+          },
+          {
+            "id": 102,
+            "type": "service",
+            "date": "2025-02-12T09:00:00",
+            "date_unixtime": "1739350800",
+            "actor": "Alice",
+            "actor_id": "user12345",
+            "action": "invite_members",
+            "members": [
+              "Bob"
+            ]
+          },
+          {
+            "id": 103,
+            "type": "message",
+            "date": "2025-02-12T10:00:00",
+            "date_unixtime": "1739354400",
+            "from": "Bob",
+            "from_id": "user67890",
+            "file": "files/report.pdf",
+            "file_name": "report.pdf",
+            "file_size": 12,
+            "mime_type": "application/pdf",
+            "text": "Attached report"
+          },
+          {
+            "id": 104,
+            "type": "message",
+            "date": "2025-02-12T11:00:00",
+            "date_unixtime": "1739358000",
+            "from": "Bob",
+            "from_id": "user67890",
+            "poll": {
+              "question": "Lunch?",
+              "closed": false,
+              "total_voters": 3,
+              "answers": [
+                {
+                  "text": "Pizza",
+                  "voters": 2,
+                  "chosen": true
+                },
+                {
+                  "text": "Sushi",
+                  "voters": 1,
+                  "chosen": false
+                }
+              ]
+            },
+            "text": ""
+          }
+        ]
+      }
+    ]
+  }
+}

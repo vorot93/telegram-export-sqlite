@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+ <meta charset="utf-8"/>
+ <title>Exported Data</title>
+</head>
+<body onload="CheckLocation();">
+ <div class="page_wrap">
+  <div class="page_header">
+   <div class="content">
+    <div class="text bold">Family Chat</div>
+   </div>
+  </div>
+  <div class="page_body chat_page">
+   <div class="history">
+    <div class="message service" id="message-1">
+     <div class="body details">12 February 2025</div>
+    </div>
+    <div class="message default clearfix" id="message101">
+     <div class="body">
+      <div class="pull_right date details" title="12.02.2025 08:37:48 UTC">08:37</div>
+      <div class="from_name">Alice</div>
+      <div class="text">Hello <strong>family</strong> <a href="https://example.com">link</a></div>
+     </div>
+    </div>
+    <div class="message default clearfix joined" id="message102">
+     <div class="body">
+      <div class="pull_right date details" title="12.02.2025 08:38:01 UTC">08:38</div>
+      <div class="reply_to details">In reply to <a href="#go_to_message101" onclick="return GoToMessage(101)">this message</a></div>
+      <div class="text">Second line</div>
+     </div>
+    </div>
+    <div class="message default clearfix" id="message103">
+     <div class="body">
+      <div class="pull_right date details" title="12.02.2025 09:00:00 UTC">09:00</div>
+      <div class="from_name">Bob via @helper_bot</div>
+      <div class="forwarded body">
+       <div class="from_name">Carol <span class="date details" title="11.02.2025 22:00:00 UTC"> 11.02.2025 22:00:00</span></div>
+      </div>
+      <div class="media_wrap clearfix">
+       <a class="photo_wrap clearfix pull_left" href="photos/photo_1.jpg">
+        <img class="photo" style="width: 80px; height: 60px" src="photos/photo_1.jpg"/>
+       </a>
+      </div>
+      <div class="text"><span class="spoiler hidden" onclick="ShowSpoiler(this)"><span aria-hidden="true">secret</span></span></div>
+      <span class="reactions"><span class="reaction"><span class="emoji">👍</span><span class="count">2</span></span></span>
+     </div>
+    </div>
+    <div class="message service" id="message104">
+     <div class="body details">Alice invited Bob</div>
+    </div>
+    <div class="message default clearfix" id="message105">
+     <div class="body">
+      <div class="pull_right date details" title="12.02.2025 10:00:00 UTC">10:00</div>
+      <div class="from_name">Alice</div>
+      <div class="media_wrap clearfix">
+       <a class="media clearfix pull_left block_link media_file" href="files/report.pdf">
+        <div class="fill pull_left"></div>
+        <div class="body">
+         <div class="title bold">report.pdf</div>
+         <div class="status details">12 KB</div>
+        </div>
+       </a>
+      </div>
+     </div>
+    </div>
+   </div>
+  </div>
+ </div>
+</body>
+</html>
