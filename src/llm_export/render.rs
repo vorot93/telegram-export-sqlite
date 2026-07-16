@@ -61,11 +61,12 @@ fn render_run(text: &str, run: &[TextEntity]) -> String {
     }
     let has = |kind: TextEntityKind| run.iter().any(|e| e.kind == kind);
     if has(TextEntityKind::Pre) {
-        return format!("```\n{text}\n```");
+        let fence = code_fence(text);
+        return format!("{fence}\n{text}\n{fence}");
     }
     let mut s = text.to_string();
     if has(TextEntityKind::Code) {
-        s = format!("`{s}`");
+        s = inline_code(text);
     }
     if has(TextEntityKind::Bold) {
         s = format!("**{s}**");
@@ -97,6 +98,37 @@ fn render_run(text: &str, run: &[TextEntity]) -> String {
 fn format_duration(seconds: i64) -> String {
     let seconds = seconds.max(0);
     format!("{}:{:02}", seconds / 60, seconds % 60)
+}
+
+fn max_backtick_run(text: &str) -> usize {
+    let mut max = 0usize;
+    let mut current = 0usize;
+    for character in text.chars() {
+        if character == '`' {
+            current += 1;
+            max = max.max(current);
+        } else {
+            current = 0;
+        }
+    }
+    max
+}
+
+/// A backtick fence longer than any run inside `text` (minimum three), so a fenced
+/// code block cannot be closed early by content that contains its own fence.
+fn code_fence(text: &str) -> String {
+    "`".repeat(max_backtick_run(text).max(2) + 1)
+}
+
+/// Wrap `text` as an inline code span with a delimiter longer than any backtick run
+/// inside it, padding with spaces when the content borders a backtick (CommonMark).
+fn inline_code(text: &str) -> String {
+    let ticks = "`".repeat(max_backtick_run(text) + 1);
+    if text.starts_with('`') || text.ends_with('`') {
+        format!("{ticks} {text} {ticks}")
+    } else {
+        format!("{ticks}{text}{ticks}")
+    }
 }
 
 fn basename(path: &str) -> Option<String> {
@@ -613,6 +645,20 @@ mod tests {
         // Blockquote across a line break: the "> " marker prefixes each line.
         let quote = r#"[{"type":"blockquote","text":"a"},{"type":"blockquote","text":"\n"},{"type":"blockquote","text":"b"}]"#;
         assert_eq!(render_message_text(quote, None), "> a\n> b");
+    }
+
+    #[test]
+    fn code_and_pre_entities_escape_embedded_backticks() {
+        // Inline code containing a backtick must use a longer delimiter so the span
+        // cannot terminate early on the embedded backtick.
+        let code = r#"[{"type":"code","text":"a`b"}]"#;
+        assert_eq!(render_message_text(code, None), "``a`b``");
+        // A pre block containing a ``` fence must use a longer fence so following
+        // content is not leaked out of the block.
+        let pre = r#"[{"type":"pre","text":"x\n```\ny"}]"#;
+        assert_eq!(render_message_text(pre, None), "````\nx\n```\ny\n````");
+        // The common no-backtick cases are unchanged.
+        assert_eq!(render_message_text(r#"[{"type":"code","text":"plain"}]"#, None), "`plain`");
     }
 
     #[test]
