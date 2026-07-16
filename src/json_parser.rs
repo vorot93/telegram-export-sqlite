@@ -2,7 +2,7 @@ use crate::{
     error::{Result, TelegramExportError},
     model::*,
 };
-use chrono::{TimeZone, Utc};
+use chrono::{NaiveDateTime, TimeZone, Utc};
 use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
 
@@ -706,7 +706,24 @@ fn timestamp_field(
         );
     }
 
-    string_field(object, raw_key).map(ToOwned::to_owned)
+    // Fallback for older exports without `date_unixtime`: the naive `date` string carries
+    // no offset, so treat it as UTC and store a valid RFC3339 value. Storing it raw would
+    // make export-html abort (parse_utc rejects offset-less strings).
+    let raw = string_field(object, raw_key)?;
+    match NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S") {
+        Ok(naive) => Some(Utc.from_utc_datetime(&naive).to_rfc3339()),
+        Err(_) => {
+            push_warning(
+                warnings,
+                source_file_parse_order,
+                Some(ordinal),
+                WarningCode::MalformedTimestamp,
+                "unparseable JSON date fallback",
+                json!({ "field": raw_key, "value": raw }),
+            );
+            None
+        }
+    }
 }
 
 fn service_display_text(
@@ -822,6 +839,20 @@ mod tests {
 
     use super::*;
     use crate::model::{TextEntityKind, TimelineItemKind, WarningCode};
+
+    #[test]
+    fn json_timestamp_fallback_without_unixtime_is_rfc3339() {
+        // Older JSON exports lack `date_unixtime`; the naive `date` fallback must still be
+        // stored as an RFC3339 value the exporters can parse (parse_utc), not raw.
+        let object = json!({ "date": "2019-05-14T12:33:21" });
+        let mut warnings = Vec::new();
+        let stored = timestamp_field(&object, "date_unixtime", "date", &mut warnings, 0, 0)
+            .expect("naive date preserved");
+
+        let parsed = crate::time::parse_utc(&stored).expect("stored timestamp is RFC3339");
+        assert_eq!(parsed.to_rfc3339(), "2019-05-14T12:33:21+00:00");
+        assert!(warnings.is_empty());
+    }
 
     #[test]
     fn parses_representative_json_export() {

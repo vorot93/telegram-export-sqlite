@@ -3,8 +3,9 @@ use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeZon
 use regex::Regex;
 
 pub fn parse_telegram_timestamp(input: &str) -> Result<String> {
+    // The timezone suffix is optional: Telegram Desktop exports made before ~2021 omit it.
     let re = Regex::new(
-        r"^(?P<day>[0-9]{2})\.(?P<month>[0-9]{2})\.(?P<year>[0-9]{4}) (?P<hour>[0-9]{2}):(?P<minute>[0-9]{2}):(?P<second>[0-9]{2}) (?P<tz>.+)$",
+        r"^(?P<day>[0-9]{2})\.(?P<month>[0-9]{2})\.(?P<year>[0-9]{4}) (?P<hour>[0-9]{2}):(?P<minute>[0-9]{2}):(?P<second>[0-9]{2})(?: (?P<tz>.+))?$",
     )
     .expect("timestamp regex compiles");
     let captures = re
@@ -24,7 +25,12 @@ pub fn parse_telegram_timestamp(input: &str) -> Result<String> {
     )
     .ok_or_else(|| TelegramExportError::Parse(format!("invalid time: {input}")))?;
     let local = NaiveDateTime::new(date, time);
-    let offset = parse_offset(&captures["tz"])?;
+    // Absent a timezone (older exports), treat the wall-clock time as UTC: this preserves
+    // the displayed time and yields a valid RFC3339 value instead of discarding the date.
+    let offset = match captures.name("tz") {
+        Some(tz) => parse_offset(tz.as_str())?,
+        None => FixedOffset::east_opt(0).expect("zero offset is valid"),
+    };
     let fixed: DateTime<FixedOffset> = offset
         .from_local_datetime(&local)
         .single()
@@ -129,6 +135,16 @@ mod tests {
         assert_eq!(
             parse_telegram_timestamp("12.02.2025 08:37:48 UTC").unwrap(),
             "2025-02-12T08:37:48Z"
+        );
+    }
+
+    #[test]
+    fn parses_telegram_timestamp_without_timezone_as_utc() {
+        // Telegram Desktop exports made before ~2021 omit the timezone suffix; the date
+        // is still trivially parseable and must not be discarded.
+        assert_eq!(
+            parse_telegram_timestamp("17.08.2018 22:59:22").unwrap(),
+            "2018-08-17T22:59:22Z"
         );
     }
 
