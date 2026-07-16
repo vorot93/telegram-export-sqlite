@@ -30,7 +30,10 @@ preservation boundary.
 - Unknown service/message/media shapes should become preserved rows plus
   warnings, not silent loss.
 - Telegram Desktop source is the best prior art for export fidelity. Prefer it
-  over third-party reimplementations when behavior is unclear.
+  over third-party reimplementations when behavior is unclear. HTML parser class
+  names, status strings, and service phrasings must match real `tdesktop`
+  `export_output_html.cpp` output; verify against it rather than inventing markup,
+  and cover it with a real-markup fixture (see `tests/fixtures/tdesktop_media`).
 
 ## Code Map
 
@@ -66,7 +69,12 @@ preservation boundary.
 - `src/output_dir.rs`: atomic output-directory replacement via a sibling temp
   dir and backup swap, shared by HTML export and bundle import.
 - `tests/integration_import.rs`: CLI and round-trip integration tests.
-- `tests/fixtures/`: small HTML and JSON export fixtures.
+- `tests/fixtures/`: small HTML and JSON export fixtures. `basic_export` is a
+  broad smoke fixture; `tdesktop_media` deliberately mirrors real Telegram
+  Desktop markup (the `media_voice_message`/`media_audio_file`/`video_file_wrap`
+  anchor classes, `video_duration` overlay, and the combined `"M:SS, N.N MB"`
+  status string) so the media/service parsers are exercised against ground truth,
+  not invented class names.
 
 ## CLI Contracts
 

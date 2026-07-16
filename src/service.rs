@@ -13,6 +13,67 @@ pub struct ClassifiedServiceEvent {
 pub fn classify_service_event(text: &str) -> Option<ClassifiedServiceEvent> {
     let text = normalize_ws(text);
 
+    // Voice-chat invites must be handled before the greedy " invited " split below,
+    // otherwise "Alice invited Bob to the voice chat" is misread as a group-membership
+    // invite whose target name is the literal "Bob to the voice chat".
+    if let Some(base) = text.strip_suffix(" to the voice chat")
+        && let Some((actor, target)) = base.split_once(" invited ")
+    {
+        let actor = actor.trim();
+        let target = target.trim();
+        if !actor.is_empty() && !target.is_empty() {
+            return Some(ClassifiedServiceEvent {
+                event_type: "invite_to_group_call".to_string(),
+                actor_name: Some(actor.to_string()),
+                target_names: vec![target.to_string()],
+                display_text: text.clone(),
+                extra_json: json!({ "action": "invite_to_group_call" }),
+            });
+        }
+    }
+
+    // Group-photo changes must be handled before the greedy " removed " split below,
+    // otherwise "Alice removed group photo" is misread as a member removal targeting a
+    // phantom member named "group photo".
+    for (suffix, event_type) in [
+        (" changed group photo", "edit_group_photo"),
+        (" removed group photo", "delete_group_photo"),
+    ] {
+        if let Some(actor) = text
+            .strip_suffix(suffix)
+            .map(str::trim)
+            .filter(|actor| !actor.is_empty())
+        {
+            return Some(ClassifiedServiceEvent {
+                event_type: event_type.to_string(),
+                actor_name: Some(actor.to_string()),
+                target_names: Vec::new(),
+                display_text: text.clone(),
+                extra_json: json!({ "action": event_type }),
+            });
+        }
+    }
+    if text == "Channel photo changed" || text == "Channel photo removed" {
+        let event_type = if text.ends_with("removed") {
+            "delete_group_photo"
+        } else {
+            "edit_group_photo"
+        };
+        return Some(ClassifiedServiceEvent {
+            event_type: event_type.to_string(),
+            actor_name: None,
+            target_names: Vec::new(),
+            display_text: text.clone(),
+            extra_json: json!({ "action": event_type }),
+        });
+    }
+
+    // Voice chat / group call, optionally carrying a "(N seconds)" duration suffix that
+    // the previous zero-duration-only matching failed to handle.
+    if let Some(event) = classify_group_call(&text) {
+        return Some(event);
+    }
+
     if let Some((actor, target)) = text.split_once(" invited ") {
         return Some(ClassifiedServiceEvent {
             event_type: "invite_members".to_string(),
@@ -111,30 +172,51 @@ pub fn classify_service_event(text: &str) -> Option<ClassifiedServiceEvent> {
         });
     }
 
-    if let Some(actor) = text
+    None
+}
+
+/// Classifies "<actor> started voice chat" and channel "Voice chat", tolerating the
+/// optional trailing " (N seconds)" duration that Telegram Desktop appends.
+fn classify_group_call(text: &str) -> Option<ClassifiedServiceEvent> {
+    let (base, duration_seconds) = split_voice_chat_duration(text);
+
+    let build = |actor: Option<&str>| {
+        let mut extra_json = json!({ "action": "group_call" });
+        if let Some(seconds) = duration_seconds {
+            extra_json["duration_seconds"] = json!(seconds);
+        }
+        ClassifiedServiceEvent {
+            event_type: "group_call".to_string(),
+            actor_name: actor.map(str::to_string),
+            target_names: Vec::new(),
+            display_text: text.to_string(),
+            extra_json,
+        }
+    };
+
+    if base == "Voice chat" {
+        return Some(build(None));
+    }
+    if let Some(actor) = base
         .strip_suffix(" started voice chat")
+        .map(str::trim)
         .filter(|actor| !actor.is_empty())
     {
-        return Some(ClassifiedServiceEvent {
-            event_type: "group_call".to_string(),
-            actor_name: Some(actor.to_string()),
-            target_names: Vec::new(),
-            display_text: text,
-            extra_json: json!({ "action": "group_call" }),
-        });
+        return Some(build(Some(actor)));
     }
-
-    if text == "Voice chat" {
-        return Some(ClassifiedServiceEvent {
-            event_type: "group_call".to_string(),
-            actor_name: None,
-            target_names: Vec::new(),
-            display_text: text,
-            extra_json: json!({ "action": "group_call" }),
-        });
-    }
-
     None
+}
+
+/// Splits a trailing " (N seconds)" duration suffix off a voice-chat service string,
+/// returning the remaining base text and the parsed duration if present.
+fn split_voice_chat_duration(text: &str) -> (&str, Option<i64>) {
+    if let Some(base) = text.strip_suffix(" seconds)")
+        && let Some((prefix, number)) = base.rsplit_once(" (")
+        && let Ok(seconds) = number.parse::<i64>()
+    {
+        return (prefix, Some(seconds));
+    }
+    (text, None)
 }
 
 fn classify_json_actor_action_fallback(
@@ -320,6 +402,40 @@ mod tests {
     fn rejects_unknown_voice_chat_text() {
         assert!(classify_service_event("Alice started voice chatting").is_none());
         assert!(classify_service_event("Voice chat scheduled").is_none());
+    }
+
+    #[test]
+    fn classifies_voice_chat_invite_without_corrupting_member_name() {
+        let event = classify_service_event("Alice invited Bob to the voice chat").unwrap();
+        assert_eq!(event.event_type, "invite_to_group_call");
+        assert_eq!(event.actor_name.as_deref(), Some("Alice"));
+        assert_eq!(event.target_names, vec!["Bob".to_string()]);
+    }
+
+    #[test]
+    fn classifies_group_photo_changes_not_as_member_events() {
+        let removed = classify_service_event("Alice removed group photo").unwrap();
+        assert_eq!(removed.event_type, "delete_group_photo");
+        assert_eq!(removed.actor_name.as_deref(), Some("Alice"));
+        assert!(removed.target_names.is_empty());
+
+        let changed = classify_service_event("Bob changed group photo").unwrap();
+        assert_eq!(changed.event_type, "edit_group_photo");
+        assert_eq!(changed.actor_name.as_deref(), Some("Bob"));
+        assert!(changed.target_names.is_empty());
+    }
+
+    #[test]
+    fn classifies_voice_chat_with_duration_suffix() {
+        let event = classify_service_event("Alice started voice chat (42 seconds)").unwrap();
+        assert_eq!(event.event_type, "group_call");
+        assert_eq!(event.actor_name.as_deref(), Some("Alice"));
+        assert_eq!(event.extra_json["duration_seconds"], 42);
+
+        let channel = classify_service_event("Voice chat (42 seconds)").unwrap();
+        assert_eq!(channel.event_type, "group_call");
+        assert_eq!(channel.actor_name, None);
+        assert_eq!(channel.extra_json["duration_seconds"], 42);
     }
 
     #[test]

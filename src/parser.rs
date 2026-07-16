@@ -5,9 +5,11 @@ use crate::{
     text::{extract_rich_text, text_from_element},
     time::{parse_duration_seconds, parse_telegram_timestamp},
 };
+use regex::Regex;
 use scraper::{ElementRef, Html, Selector};
 use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 #[derive(Debug, Default, Clone)]
 pub struct ParserState {
@@ -101,6 +103,12 @@ fn service_element_is_date_separator(
 
     let body = select_element(element, "div.body");
     let display_text = body.map(text_from_element).unwrap_or_default();
+    // A genuine service event (e.g. a group-title change that happens to mention a month
+    // and a year) must never be discarded as a date separator just because its text trips
+    // the heuristic. Real date separators carry negative ids and do not classify.
+    if classify_service_event(&display_text).is_some() {
+        return false;
+    }
     looks_like_date_separator(display_text.as_str())
 }
 
@@ -548,7 +556,7 @@ fn parse_media(
     ordinal: i64,
 ) {
     let supported_media_selector = selector(
-        "a.photo_wrap, a.media_photo, a.media_file, a.video_file_wrap, a.media_video, a.media_audio_file, a.voice_message, a.sticker_wrap, a.animated_wrap",
+        "a.photo_wrap, a.media_photo, a.media_file, a.video_file_wrap, a.media_video, a.media_audio_file, a.media_voice_message, a.sticker_wrap, a.animated_wrap",
     );
     for media_wrap in body.select(&selector("div.media_wrap")) {
         if media_wrap
@@ -613,7 +621,7 @@ fn parse_media(
         let thumb_path = select_attr(anchor, "img", "src")
             .map(|src| joined_export_path(message_file_parent, &src));
         let status = select_text(anchor, ".status");
-        let duration_seconds = select_text(anchor, ".duration")
+        let duration_seconds = select_text(anchor, ".video_duration")
             .as_deref()
             .and_then(parse_duration_text)
             .or_else(|| status.as_deref().and_then(parse_duration_text));
@@ -809,7 +817,7 @@ fn media_kind(anchor: ElementRef<'_>) -> &'static str {
         "video_file"
     } else if has_class(anchor, "media_audio_file") {
         "audio"
-    } else if has_class(anchor, "voice_message") {
+    } else if has_class(anchor, "media_voice_message") {
         "voice"
     } else {
         "file"
@@ -831,25 +839,34 @@ fn mime_from_href(href: &str) -> Option<String> {
 }
 
 fn parse_file_size(status: &str) -> Option<u64> {
-    let lower = status.to_ascii_lowercase();
-    let value = first_number(status)? as u64;
-    let multiplier = if lower.contains("gb") {
-        1024_u64.pow(3)
-    } else if lower.contains("mb") {
-        1024_u64.pow(2)
-    } else if lower.contains("kb") {
-        1024
-    } else if lower.contains('b') {
-        1
-    } else {
-        return None;
+    // Telegram Desktop statuses are "<duration>, <size>" (e.g. "03:12, 7.3 MB") or a bare
+    // size, always with a one-decimal magnitude. Match the numeric-plus-unit portion so
+    // the duration's leading digits are never mistaken for the size, and keep the decimal.
+    static SIZE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)(\d+(?:\.\d+)?)\s*(TB|GB|MB|KB|B)\b").expect("file size regex compiles")
+    });
+
+    let captures = SIZE.captures_iter(status).last()?;
+    let value: f64 = captures.get(1)?.as_str().parse().ok()?;
+    let multiplier: f64 = match captures.get(2)?.as_str().to_ascii_uppercase().as_str() {
+        "TB" => 1024_f64.powi(4),
+        "GB" => 1024_f64.powi(3),
+        "MB" => 1024_f64.powi(2),
+        "KB" => 1024_f64,
+        "B" => 1.0,
+        _ => return None,
     };
 
-    value.checked_mul(multiplier)
+    Some((value * multiplier).round() as u64)
 }
 
 fn parse_duration_text(text: &str) -> Option<i64> {
+    // The colon token can carry trailing punctuation from the combined status, e.g. the
+    // "03:12," in "03:12, 7.3 MB"; strip anything that is not a digit or a colon first.
     text.split_whitespace()
+        .map(|part| {
+            part.trim_matches(|character: char| !character.is_ascii_digit() && character != ':')
+        })
         .find(|part| part.contains(':'))
         .and_then(|part| parse_duration_seconds(part).ok())
 }
@@ -965,6 +982,105 @@ mod tests {
                 .attachments
                 .iter()
                 .any(|attachment| attachment.kind == "file")
+        );
+    }
+
+    fn approx_bytes(value: f64, unit: u64) -> u64 {
+        (value * unit as f64).round() as u64
+    }
+
+    #[test]
+    fn parses_file_size_from_real_status_strings() {
+        let mib = 1024 * 1024;
+        // Telegram Desktop's real status is "<duration>, <size>" with a one-decimal size.
+        assert_eq!(parse_file_size("7.3 MB"), Some(approx_bytes(7.3, mib)));
+        assert_eq!(parse_file_size("03:12, 7.3 MB"), Some(approx_bytes(7.3, mib)));
+        assert_eq!(parse_file_size("00:04, 12.4 KB"), Some(approx_bytes(12.4, 1024)));
+        assert_eq!(parse_file_size("512 B"), Some(512));
+    }
+
+    #[test]
+    fn parses_duration_from_real_status_strings() {
+        assert_eq!(parse_duration_text("03:12, 7.3 MB"), Some(192));
+        assert_eq!(parse_duration_text("00:04, 12.4 KB"), Some(4));
+        assert_eq!(parse_duration_text("1:01:40"), Some(3700));
+    }
+
+    #[test]
+    fn parses_real_tdesktop_media_and_service_markup() {
+        let parsed = parse_export_file(
+            Path::new("tests/fixtures/tdesktop_media"),
+            Path::new("tests/fixtures/tdesktop_media/chat_001/messages.html"),
+            Path::new("chat_001/messages.html"),
+            0,
+            0,
+        )
+        .unwrap();
+
+        // Voice notes use the real class token `media_voice_message`.
+        let voice = parsed
+            .attachments
+            .iter()
+            .find(|attachment| attachment.kind == "voice")
+            .expect("voice note recognized");
+        assert_eq!(voice.duration_seconds, Some(4));
+
+        // Audio size and duration come from the real "03:12, 7.3 MB" status string.
+        let audio = parsed
+            .attachments
+            .iter()
+            .find(|attachment| attachment.kind == "audio")
+            .expect("audio file recognized");
+        assert_eq!(audio.duration_seconds, Some(192));
+        assert_eq!(audio.file_size, Some(approx_bytes(7.3, 1024 * 1024)));
+
+        // Video duration comes from the `.video_duration` overlay div.
+        let video = parsed
+            .attachments
+            .iter()
+            .find(|attachment| attachment.kind == "video_file")
+            .expect("video file recognized");
+        assert_eq!(video.duration_seconds, Some(19));
+
+        assert!(
+            parsed
+                .attachments
+                .iter()
+                .all(|attachment| attachment.kind != "unsupported")
+        );
+
+        // A genuine service event whose text contains a month + year must not be
+        // swallowed by the date-separator heuristic.
+        assert!(parsed.service_events.iter().any(|event| {
+            event.event_type == "edit_group_title" && event.display_text.contains("March 2025 Trip")
+        }));
+
+        // The real negative-id date separator is still dropped, not stored.
+        assert!(
+            parsed
+                .timeline_items
+                .iter()
+                .all(|item| item.display_text.as_deref() != Some("13 February 2025"))
+        );
+
+        // Group-photo and voice-chat events classify structurally, without phantom members.
+        assert!(
+            parsed
+                .service_events
+                .iter()
+                .any(|event| event.event_type == "delete_group_photo")
+        );
+        assert!(
+            parsed
+                .service_events
+                .iter()
+                .any(|event| event.event_type == "group_call")
+        );
+        assert!(
+            parsed
+                .service_events
+                .iter()
+                .all(|event| event.target_names != vec!["group photo".to_string()])
         );
     }
 
