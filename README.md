@@ -21,6 +21,8 @@ Output:
 - SQLite databases with normalized tables plus preserved source details.
 - A combined Telegram Desktop-style HTML export with one `messages.html` file
   and local support assets.
+- A compact, LLM-optimized Markdown document (single file or stdout) — a lossy,
+  token-economical view for pasting/piping into an LLM. Not re-importable.
 
 ## Install
 
@@ -161,6 +163,64 @@ writes through a sibling temporary directory before replacing the final
 directory. The command refuses to run when the input database is inside the
 output directory, because replacing the output directory would delete the source
 database.
+
+### `export-llm`
+
+```bash
+telegram-export-sqlite export-llm <INPUT_DB> <OUTPUT_FILE> [--force]
+```
+
+`<INPUT_DB>` must be a SQLite database produced by this tool. `<OUTPUT_FILE>` is
+the Markdown destination, or `-` to stream to stdout (pipe straight into an LLM
+CLI). The document is a **lossy, token-economical view** designed to fit an LLM
+context window: date headers, speaker-grouped lines, terse reply/forward/edit/
+reaction markers, `[media]` placeholders, and Markdown rich text. It is not a
+fidelity export and cannot be re-imported.
+
+Options:
+
+- `--force`: overwrite an existing output file.
+
+#### Transcribing voice messages (`--transcribe`)
+
+`export-llm` can inline the spoken content of voice messages and round video
+notes, which are otherwise rendered only as a bare placeholder (`[voice 0:12]`,
+`[video note 0:08]`). Pass a transcription command; `export-llm` runs it once
+per audio file and inlines the result:
+
+```
+export-llm chat.sqlite chat.md --transcribe "whisper --model base --output-format txt {}"
+```
+
+- **`{}` is the audio file path.** Each command argument equal to exactly `{}`
+  is replaced by the file's absolute path; if you omit `{}`, the path is
+  appended as the final argument. (`--out={}` is *not* expanded — `{}` must be a
+  whole argument.)
+- **No shell is involved.** The command is split into arguments (honoring
+  quotes) and executed directly, so a media filename can never inject shell
+  metacharacters. If you need pipes or redirects, wrap them in your own script:
+  `--transcribe "my-transcribe.sh {}"`.
+- **Any engine works.** `export-llm` reads whatever the command prints to
+  stdout (trimmed). Use Whisper, a cloud CLI, or anything else — nothing is
+  baked in.
+- Output stays read-only and unpersisted: transcripts appear only in the
+  generated Markdown; the database is never modified. Without `--transcribe`,
+  output is byte-for-byte unchanged.
+- A per-file failure (missing file, spawn error, non-zero exit, empty output)
+  degrades to the bare `[voice …]` placeholder and is reported in the stderr
+  summary (`transcribed: N · failed/skipped: M`); it never aborts the export.
+- **v1 limits:** transcription is sequential, has no per-file timeout, and is
+  not cached (every export re-runs the engine over every in-scope file).
+
+A stats summary (messages, participants, date range, output bytes, and an
+approximate token count) is printed to stderr, so stdout stays clean for piping.
+
+Example:
+
+```bash
+telegram-export-sqlite export-llm chat.sqlite chat.md --force
+telegram-export-sqlite export-llm chat.sqlite - | llm "summarize this chat"
+```
 
 ## Database Contents
 

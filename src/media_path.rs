@@ -77,6 +77,34 @@ pub fn href_scheme(raw: &str) -> Option<String> {
     }
 }
 
+/// Validate a link href for output. Returns the href unchanged when safe, or
+/// `None` when it should be dropped (keeping only the link's visible text).
+/// Rejects control characters, leading/trailing whitespace, and any scheme
+/// outside a conservative allowlist (`http`, `https`, `mailto`, `tel`, `tg`);
+/// relative and `#`-anchor hrefs are allowed. Shared by HTML export and LLM
+/// export so both apply the same policy.
+pub fn safe_href(raw: &str) -> Option<String> {
+    if raw
+        .chars()
+        .any(|character| character.is_control() || matches!(character, '\u{2028}' | '\u{2029}'))
+    {
+        return None;
+    }
+    if raw.trim() != raw {
+        return None;
+    }
+    if raw.is_empty() || raw.starts_with('#') {
+        return Some(raw.to_string());
+    }
+
+    if let Some(scheme) = href_scheme(raw) {
+        return matches!(scheme.as_str(), "http" | "https" | "mailto" | "tel" | "tg")
+            .then(|| raw.to_string());
+    }
+
+    Some(raw.to_string())
+}
+
 fn is_valid_scheme(scheme: &str) -> bool {
     let mut characters = scheme.chars();
     let Some(first) = characters.next() else {
@@ -107,5 +135,24 @@ mod tests {
         assert_eq!(safe_media_path("a/%2e%2e/b.jpg"), None);
         assert_eq!(safe_media_path("a\\b.jpg"), None);
         assert_eq!(safe_media_path("http://example.com/x.jpg"), None);
+    }
+
+    #[test]
+    fn safe_href_allows_web_schemes_and_drops_dangerous_ones() {
+        for allowed in [
+            "https://e.com",
+            "http://e.com",
+            "mailto:a@b.com",
+            "tel:+1555",
+            "tg://resolve?domain=x",
+            "/relative/path",
+            "#anchor",
+        ] {
+            assert_eq!(safe_href(allowed).as_deref(), Some(allowed));
+        }
+        assert_eq!(safe_href("javascript:alert(1)"), None);
+        assert_eq!(safe_href("data:text/html,<script>"), None);
+        assert_eq!(safe_href("file:///etc/passwd"), None);
+        assert_eq!(safe_href(" https://e.com "), None); // leading/trailing whitespace
     }
 }

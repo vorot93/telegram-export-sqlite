@@ -250,6 +250,36 @@ pub struct ParsedExport {
     pub warnings: Vec<ImportWarning>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OutputTarget {
+    File(PathBuf),
+    Stdout,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExportLlmOptions {
+    pub input_db: PathBuf,
+    pub output: OutputTarget,
+    pub force: bool,
+    /// Raw `--transcribe` command; `None` disables transcription.
+    pub transcribe: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ExportLlmSummary {
+    pub messages: usize,
+    pub service_events: usize,
+    pub attachments: usize,
+    pub polls: usize,
+    pub participants: usize,
+    pub first_date: Option<String>,
+    pub last_date: Option<String>,
+    pub output_bytes: usize,
+    pub estimated_tokens: usize,
+    pub transcribed: usize,
+    pub transcribe_failed: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;

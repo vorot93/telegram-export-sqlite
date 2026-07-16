@@ -1,9 +1,9 @@
 mod assets;
 mod render;
-mod rows;
 
 use crate::{
     error::{Result, TelegramExportError},
+    export_rows as rows,
     model::{ExportHtmlOptions, ExportHtmlSummary},
     output_dir::{create_sibling_work_dir, replace_output_dir},
 };

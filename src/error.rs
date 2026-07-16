@@ -50,6 +50,15 @@ pub enum TelegramExportError {
     #[error("failed to parse Telegram export: {0}")]
     Parse(String),
 
+    #[error("output file already exists: {0}; pass --force")]
+    OutputFileExists(PathBuf),
+
+    #[error("export output file must not be the input database: {0}")]
+    ExportOutputIsInputDatabase(PathBuf),
+
+    #[error("invalid --transcribe command: {0}")]
+    TranscribeCommandInvalid(String),
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 

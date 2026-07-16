@@ -3,9 +3,11 @@ use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
 #[command(name = "telegram-export-sqlite")]
-#[command(about = "Import Telegram Desktop exports to SQLite and export SQLite to HTML")]
 #[command(
-    after_help = "Usage:\n  telegram-export-sqlite import <EXPORT_DIR> [DEST]\n  telegram-export-sqlite merge <OUTPUT_DB> <INPUT_DB>...\n  telegram-export-sqlite export-html <INPUT_DB> <OUTPUT_DIR>"
+    about = "Import Telegram Desktop exports to SQLite and export SQLite to HTML or LLM Markdown"
+)]
+#[command(
+    after_help = "Usage:\n  telegram-export-sqlite import <EXPORT_DIR> [DEST]\n  telegram-export-sqlite merge <OUTPUT_DB> <INPUT_DB>...\n  telegram-export-sqlite export-html <INPUT_DB> <OUTPUT_DIR>\n  telegram-export-sqlite export-llm <INPUT_DB> <OUTPUT_FILE>"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -41,6 +43,19 @@ enum Command {
         output_dir: PathBuf,
         #[arg(long)]
         force: bool,
+    },
+    /// Export an importer-created SQLite database to compact, LLM-optimized Markdown.
+    ExportLlm {
+        input_db: PathBuf,
+        #[arg(value_name = "OUTPUT_FILE")]
+        output_file: PathBuf,
+        #[arg(long)]
+        force: bool,
+        /// Transcribe voice notes and round video notes with an external command.
+        /// Each argument equal to `{}` is replaced by the audio file path (else
+        /// the path is appended). Runs directly, no shell.
+        #[arg(long, value_name = "COMMAND")]
+        transcribe: Option<String>,
     },
 }
 
@@ -114,6 +129,44 @@ pub fn run() -> anyhow::Result<()> {
                 "generated date separators: {}",
                 summary.generated_date_separators
             );
+        }
+        Command::ExportLlm {
+            input_db,
+            output_file,
+            force,
+            transcribe,
+        } => {
+            let output = if output_file.as_os_str() == "-" {
+                crate::model::OutputTarget::Stdout
+            } else {
+                crate::model::OutputTarget::File(output_file)
+            };
+            let transcribe_enabled = transcribe.is_some();
+            let options = crate::model::ExportLlmOptions {
+                input_db,
+                output,
+                force,
+                transcribe,
+            };
+            let summary = crate::llm_export::run_export_llm(options)?;
+            eprintln!("messages: {}", summary.messages);
+            eprintln!("service events: {}", summary.service_events);
+            eprintln!("attachments: {}", summary.attachments);
+            eprintln!("polls: {}", summary.polls);
+            eprintln!("participants: {}", summary.participants);
+            eprintln!(
+                "date range: {} → {}",
+                summary.first_date.as_deref().unwrap_or("?"),
+                summary.last_date.as_deref().unwrap_or("?"),
+            );
+            eprintln!("output bytes: {}", summary.output_bytes);
+            eprintln!("estimated tokens: {}", summary.estimated_tokens);
+            if transcribe_enabled {
+                eprintln!(
+                    "transcribed: {} · failed/skipped: {}",
+                    summary.transcribed, summary.transcribe_failed
+                );
+            }
         }
     }
 

@@ -1,10 +1,11 @@
 use crate::{
     error::Result,
-    html_export::rows::{
+    export_rows::{
         AttachmentRow, ExportRows, MessageRow, PollOptionRow, PollRow, ServiceEventRow, TimelineRow,
     },
-    media_path::{href_scheme, safe_media_path},
+    media_path::{safe_href, safe_media_path},
     model::{TextEntity, TextEntityKind},
+    time::parse_utc,
 };
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use serde_json::Value;
@@ -27,12 +28,6 @@ pub fn escape_html(input: &str) -> String {
         }
     }
     output
-}
-
-pub fn parse_utc(input: &str) -> Result<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(input)
-        .map(|date| date.with_timezone(&Utc))
-        .map_err(|error| crate::error::TelegramExportError::Parse(error.to_string()))
 }
 
 pub fn format_date_text(date: DateTime<Utc>) -> String {
@@ -890,28 +885,6 @@ fn escape_js_string(input: &str) -> String {
     output
 }
 
-fn safe_href(raw: &str) -> Option<String> {
-    if raw
-        .chars()
-        .any(|character| character.is_control() || matches!(character, '\u{2028}' | '\u{2029}'))
-    {
-        return None;
-    }
-    if raw.trim() != raw {
-        return None;
-    }
-    if raw.is_empty() || raw.starts_with('#') {
-        return Some(raw.to_string());
-    }
-
-    if let Some(scheme) = href_scheme(raw) {
-        return matches!(scheme.as_str(), "http" | "https" | "mailto" | "tel" | "tg")
-            .then(|| raw.to_string());
-    }
-
-    Some(raw.to_string())
-}
-
 fn render_onclick_link(function_name: &str, argument: &str, text: &str) -> String {
     let onclick = escape_attr(&format!(
         "return {function_name}(\"{}\")",
@@ -1179,7 +1152,7 @@ mod tests {
 #[cfg(test)]
 mod timeline_tests {
     use super::*;
-    use crate::html_export::rows::{
+    use crate::export_rows::{
         AttachmentRow, ExportRows, MessageRow, PollOptionRow, PollRow, ServiceEventRow, TimelineRow,
     };
 

@@ -36,6 +36,12 @@ pub fn parse_telegram_timestamp(input: &str) -> Result<String> {
         .to_string())
 }
 
+pub fn parse_utc(input: &str) -> Result<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(input)
+        .map(|date| date.with_timezone(&Utc))
+        .map_err(|error| TelegramExportError::Parse(error.to_string()))
+}
+
 pub fn parse_duration_seconds(input: &str) -> Result<i64> {
     let parts: Vec<i64> = input
         .split(':')

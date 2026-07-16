@@ -53,9 +53,14 @@ preservation boundary.
 - `src/db.rs`: schema, inserts, FTS creation. Current `SCHEMA_VERSION` is `1`.
 - `src/merge.rs`: SQLite continuation merge, dedupe/conflict behavior.
 - `src/html_export.rs`: SQLite to HTML command orchestration.
-- `src/html_export/rows.rs`: export row loaders and schema validation.
+- `src/export_rows.rs`: shared SQLite row loader + schema validation
+  (`REQUIRED_TABLES`, `validate_input_database`, `load_export`, row structs),
+  consumed by both HTML and LLM export. (Formerly `html_export/rows.rs`.)
 - `src/html_export/render.rs`: Telegram Desktop-style HTML rendering.
 - `src/html_export/assets.rs`: local non-verbatim support assets.
+- `src/llm_export.rs`: `export-llm` orchestration — validate, load, render,
+  write file or stdout, print stderr summary.
+- `src/llm_export/render.rs`: compact-Markdown renderer for LLM ingestion.
 - `src/media_path.rs`: safe relative media-path/href-scheme validation, shared
   by HTML export and bundle media copying.
 - `src/output_dir.rs`: atomic output-directory replacement via a sibling temp
@@ -71,6 +76,7 @@ Keep these commands and help text in sync when changing behavior:
 telegram-export-sqlite import <EXPORT_DIR> [DEST] [--force] [--incremental] [--fts]
 telegram-export-sqlite merge <OUTPUT_DB> <INPUT_DB>... [--force] [--fts]
 telegram-export-sqlite export-html <INPUT_DB> <OUTPUT_DIR> [--force]
+telegram-export-sqlite export-llm <INPUT_DB> <OUTPUT_FILE> [--force]
 ```
 
 Safety expectations:
@@ -149,6 +155,74 @@ Safety expectations:
   schemes, backslashes, raw `..`, and percent-encoded traversal.
 - Preserve service-event row/type round trips even when exact Telegram wording
   cannot be reconstructed from missing JSON actor/title/member data.
+
+## LLM Export Notes
+
+- `export-llm` produces a **lossy, token-economical Markdown view**, not a
+  fidelity export, and is intentionally **not re-importable** (no round-trip
+  test). It reuses the shared `export_rows` loader with a different renderer.
+- `parse_utc` is a shared `time.rs` primitive used by both renderers.
+- Output goes to a file (atomic temp+rename) or stdout (`-`); the stats summary
+  is written to stderr so piped stdout stays clean.
+- `export-llm --transcribe "<cmd>"` transcribes attachment kinds `voice`,
+  `voice_message`, and `video_message` via an external command. Parsing lives in
+  `src/llm_export/transcribe.rs` (`shell-words` → argv, run directly, no shell;
+  `{}` = whole-argument path placeholder). It is output-only: no schema change,
+  no persistence, DB stays read-only. Per-file failures degrade to the bare
+  placeholder and are counted. Like `bundle.rs`, it canonicalizes each resolved
+  audio path and skips any that escapes the export dir via a symlink — otherwise
+  a crafted export could aim a voice file at an arbitrary path (e.g.
+  `~/.ssh/id_rsa`) and exfiltrate it through the user's transcription engine. v1
+  is sequential, no timeout, no cache. The end-to-end test uses a fake `cat`
+  engine over `tests/fixtures/voice_export`; the symlink-escape guard has its own
+  `#[cfg(unix)]` test.
+
+## Design Rationale
+
+Non-obvious *why* behind choices that are easy to second-guess or break by
+accident. (Distilled from the original `export-llm` and voice-transcription
+design specs, which are no longer kept as standalone documents.)
+
+- **The LLM export is a deliberate lossy view.** `export-llm` breaks the
+  no-data-loss rule *on purpose*: SQLite is the durable, lossless artifact and
+  the Markdown is a derived, throwaway view tuned for token economy — everything
+  it drops stays queryable in SQLite. It is named `export-llm`, not `export-md`,
+  to signal a purpose-built lossy view rather than a faithful Markdown rendering.
+- **Verbatim message text is safe without Markdown escaping.** The LLM renderer
+  emits content unescaped, which is safe *only* because of the line shape: every
+  line starts with `HH:MM`/name and every wrapped physical line is indented under
+  the text column, so `#`, `-`, `>`, `*`, `_` inside content cannot be misparsed
+  as document structure. Preserve that invariant — emitting content at column 0,
+  or dropping the wrap indent, would break the assumption and reintroduce a need
+  to escape. (Link-target safety is separate and *is* enforced: `TextUrl` hrefs
+  still pass `media_path::safe_href`'s scheme allowlist; only text-content
+  escaping is skipped.)
+- **Nested rich-text runs are collapsed deterministically.** The entity extractor
+  emits one entity per active mark over the same substring, so a bold link arrives
+  as two byte-identical `.text` entities. The renderer merges a maximal run of
+  identical-`.text` entities into a single wrapping (bold link → `[**link**](url)`)
+  with fixed innermost→outermost precedence (code, bold, italic, strike, spoiler,
+  link) so output is stable and testable. The rare false-merge — two genuinely
+  separate, identical, adjacent, differently-styled words — is an accepted cost.
+- **Reply anchors are reference-only `#n`.** Only messages that are actually
+  replied to get a compact per-document id (`#1`, `#2`, … in first-appearance
+  order), never the bulky raw Telegram message id; messages never replied to
+  carry none. This keeps the document lean while still resolving `↳#n` replies.
+- **The token estimate is intentionally tokenizer-free.** `≈ ceil(chars / 4)`,
+  labelled approximate. The target model varies (Claude, GPT, …); a real
+  tokenizer is model-specific and heavy, and ~4 chars/token is an adequate
+  "will this fit the context window?" gauge.
+- **Transcription is output-only by deliberate reversal.** The first design
+  sketched persisting transcripts in SQLite so the exporter stayed a pure DB
+  view. That was rejected: transcription lives entirely inside `export-llm` with
+  no schema change and no cache (`SCHEMA_VERSION` stays `1`), so existing
+  databases need no migration and the DB stays read-only. The cost — re-running
+  the engine on every export — is an accepted v1 trade-off; persistence and
+  caching remain open future work.
+- **LLM-export tunables most likely to be revisited:** the participant list caps
+  at 30 names then `+N more`; the token divisor is 4; all service events are
+  included (they are already terse one-liners); the nested-run false-merge is
+  accepted rather than disambiguated.
 
 ## Documentation Discipline
 

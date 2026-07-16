@@ -742,3 +742,138 @@ fn cli_import_bundle_fails_when_dest_is_a_file() {
         .failure()
         .stderr(contains("output path is a file"));
 }
+
+#[test]
+fn cli_exposes_export_llm_command() {
+    let mut cmd = Command::cargo_bin("telegram-export-sqlite").unwrap();
+    cmd.arg("export-llm").arg("--help");
+    cmd.assert().success();
+}
+
+#[test]
+fn cli_export_llm_writes_markdown_file() {
+    let staged = staged_export("basic_export");
+    Command::cargo_bin("telegram-export-sqlite")
+        .unwrap()
+        .arg("import")
+        .arg(staged.path())
+        .assert()
+        .success();
+
+    let db = staged.path().join("chat.sqlite");
+    let out = staged.path().join("chat.md");
+    Command::cargo_bin("telegram-export-sqlite")
+        .unwrap()
+        .arg("export-llm")
+        .arg(&db)
+        .arg(&out)
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("estimated tokens:"));
+
+    let text = std::fs::read_to_string(&out).unwrap();
+    assert!(text.starts_with("# "), "document starts with an H1 title");
+    assert!(text.contains(" msgs · "), "header stat line present");
+}
+
+#[test]
+fn cli_export_llm_streams_to_stdout_with_dash() {
+    let staged = staged_export("basic_export");
+    Command::cargo_bin("telegram-export-sqlite")
+        .unwrap()
+        .arg("import")
+        .arg(staged.path())
+        .assert()
+        .success();
+
+    let db = staged.path().join("chat.sqlite");
+    Command::cargo_bin("telegram-export-sqlite")
+        .unwrap()
+        .arg("export-llm")
+        .arg(&db)
+        .arg("-")
+        .assert()
+        .success()
+        .stdout(predicates::str::starts_with("# "));
+}
+
+#[test]
+fn cli_export_llm_rejects_existing_output_without_force() {
+    let staged = staged_export("basic_export");
+    Command::cargo_bin("telegram-export-sqlite")
+        .unwrap()
+        .arg("import")
+        .arg(staged.path())
+        .assert()
+        .success();
+
+    let db = staged.path().join("chat.sqlite");
+    let out = staged.path().join("chat.md");
+    std::fs::write(&out, "existing").unwrap();
+    Command::cargo_bin("telegram-export-sqlite")
+        .unwrap()
+        .arg("export-llm")
+        .arg(&db)
+        .arg(&out)
+        .assert()
+        .failure();
+}
+
+#[test]
+fn cli_export_llm_refuses_output_equal_to_input_even_with_force() {
+    let staged = staged_export("basic_export");
+    Command::cargo_bin("telegram-export-sqlite")
+        .unwrap()
+        .arg("import")
+        .arg(staged.path())
+        .assert()
+        .success();
+
+    let db = staged.path().join("chat.sqlite");
+    // Even with --force, export-llm must refuse to overwrite the source DB with Markdown.
+    Command::cargo_bin("telegram-export-sqlite")
+        .unwrap()
+        .arg("export-llm")
+        .arg(&db)
+        .arg(&db)
+        .arg("--force")
+        .assert()
+        .failure();
+
+    // Prove the DB was not clobbered: a normal export to a real file still succeeds.
+    let out = staged.path().join("chat.md");
+    Command::cargo_bin("telegram-export-sqlite")
+        .unwrap()
+        .arg("export-llm")
+        .arg(&db)
+        .arg(&out)
+        .assert()
+        .success();
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_export_llm_transcribes_voice_with_fake_engine() {
+    // `cat` stands in for a real transcription engine: it echoes the staged
+    // voice file's contents, which must appear inlined next to `[voice …]`.
+    let staged = staged_export("voice_export");
+    Command::cargo_bin("telegram-export-sqlite")
+        .unwrap()
+        .arg("import")
+        .arg(staged.path())
+        .assert()
+        .success();
+
+    let db = staged.path().join("chat.sqlite");
+    Command::cargo_bin("telegram-export-sqlite")
+        .unwrap()
+        .arg("export-llm")
+        .arg(&db)
+        .arg("-")
+        .arg("--transcribe")
+        .arg("cat {}")
+        .assert()
+        .success()
+        .stdout(contains("[voice 0:12] \"push it to Friday\""))
+        .stderr(contains("transcribed: 1 · failed/skipped: 0"));
+}
