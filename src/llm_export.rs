@@ -90,13 +90,18 @@ fn paths_equal(a: &Path, b: &Path) -> bool {
 /// pipe early (the headline `export-llm - | llm` workflow): a `BrokenPipe` error
 /// is swallowed so the export exits cleanly instead of panicking, while any other
 /// write error propagates.
-fn write_stdout(document: &str) -> Result<()> {
-    use std::io::Write;
-    let mut stdout = std::io::stdout().lock();
-    match stdout
-        .write_all(document.as_bytes())
-        .and_then(|()| stdout.flush())
-    {
+pub(crate) fn write_stdout(document: &str) -> Result<()> {
+    write_tolerating_broken_pipe(std::io::stdout().lock(), document.as_bytes())
+}
+
+/// Write `bytes` to `writer`, tolerating a reader that closes the pipe early (the
+/// `export-llm - | head` workflow, and command summaries piped to `head`): a
+/// `BrokenPipe` error resolves to `Ok(())` while any other error propagates.
+pub(crate) fn write_tolerating_broken_pipe<W: std::io::Write>(
+    mut writer: W,
+    bytes: &[u8],
+) -> Result<()> {
+    match writer.write_all(bytes).and_then(|()| writer.flush()) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
         Err(error) => Err(error.into()),
@@ -114,4 +119,30 @@ fn write_atomically(path: &Path, contents: &str) -> Result<()> {
     fs::write(&temp, contents)?;
     fs::rename(&temp, path)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct ErrWriter(std::io::ErrorKind);
+    impl std::io::Write for ErrWriter {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::from(self.0))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn broken_pipe_is_tolerated_other_errors_propagate() {
+        assert!(
+            write_tolerating_broken_pipe(ErrWriter(std::io::ErrorKind::BrokenPipe), b"x").is_ok()
+        );
+        assert!(
+            write_tolerating_broken_pipe(ErrWriter(std::io::ErrorKind::PermissionDenied), b"x")
+                .is_err()
+        );
+    }
 }

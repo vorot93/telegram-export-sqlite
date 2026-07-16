@@ -78,14 +78,18 @@ pub fn run() -> anyhow::Result<()> {
                 fts,
             };
             let summary = crate::importer::run_import(options)?;
-            println!("files seen: {}", summary.files_seen);
-            println!("files imported: {}", summary.files_imported);
-            println!("files skipped: {}", summary.files_skipped);
-            println!("timeline items: {}", summary.timeline_items);
-            println!("messages: {}", summary.messages);
-            println!("service events: {}", summary.service_events);
-            println!("attachments: {}", summary.attachments);
-            println!("warnings: {}", summary.warnings);
+            crate::llm_export::write_stdout(&format!(
+                "files seen: {}\nfiles imported: {}\nfiles skipped: {}\ntimeline items: {}\n\
+                 messages: {}\nservice events: {}\nattachments: {}\nwarnings: {}\n",
+                summary.files_seen,
+                summary.files_imported,
+                summary.files_skipped,
+                summary.timeline_items,
+                summary.messages,
+                summary.service_events,
+                summary.attachments,
+                summary.warnings,
+            ))?;
         }
         Command::Merge {
             output_db,
@@ -100,14 +104,18 @@ pub fn run() -> anyhow::Result<()> {
                 fts,
             };
             let summary = crate::merge::run_merge(options)?;
-            println!("input databases: {}", summary.input_databases);
-            println!("timeline items: {}", summary.timeline_items);
-            println!("messages: {}", summary.messages);
-            println!("service events: {}", summary.service_events);
-            println!("attachments: {}", summary.attachments);
-            println!("duplicates skipped: {}", summary.duplicates_skipped);
-            println!("conflicts kept: {}", summary.conflicts_kept);
-            println!("warnings: {}", summary.warnings);
+            crate::llm_export::write_stdout(&format!(
+                "input databases: {}\ntimeline items: {}\nmessages: {}\nservice events: {}\n\
+                 attachments: {}\nduplicates skipped: {}\nconflicts kept: {}\nwarnings: {}\n",
+                summary.input_databases,
+                summary.timeline_items,
+                summary.messages,
+                summary.service_events,
+                summary.attachments,
+                summary.duplicates_skipped,
+                summary.conflicts_kept,
+                summary.warnings,
+            ))?;
         }
         Command::ExportHtml {
             input_db,
@@ -120,15 +128,16 @@ pub fn run() -> anyhow::Result<()> {
                 force,
             };
             let summary = crate::html_export::run_export_html(options)?;
-            println!("timeline items: {}", summary.timeline_items);
-            println!("messages: {}", summary.messages);
-            println!("service events: {}", summary.service_events);
-            println!("attachments: {}", summary.attachments);
-            println!("polls: {}", summary.polls);
-            println!(
-                "generated date separators: {}",
-                summary.generated_date_separators
-            );
+            crate::llm_export::write_stdout(&format!(
+                "timeline items: {}\nmessages: {}\nservice events: {}\nattachments: {}\n\
+                 polls: {}\ngenerated date separators: {}\n",
+                summary.timeline_items,
+                summary.messages,
+                summary.service_events,
+                summary.attachments,
+                summary.polls,
+                summary.generated_date_separators,
+            ))?;
         }
         Command::ExportLlm {
             input_db,
