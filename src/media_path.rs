@@ -93,6 +93,11 @@ pub fn safe_href(raw: &str) -> Option<String> {
     if raw.trim() != raw {
         return None;
     }
+    // Reject protocol-relative ("//host") and UNC/backslash variants that browsers
+    // normalize to an authority: they navigate off-origin despite the scheme allowlist.
+    if raw.replace('\\', "/").starts_with("//") {
+        return None;
+    }
     if raw.is_empty() || raw.starts_with('#') {
         return Some(raw.to_string());
     }
@@ -154,5 +159,18 @@ mod tests {
         assert_eq!(safe_href("data:text/html,<script>"), None);
         assert_eq!(safe_href("file:///etc/passwd"), None);
         assert_eq!(safe_href(" https://e.com "), None); // leading/trailing whitespace
+    }
+
+    #[test]
+    fn safe_href_rejects_protocol_relative_and_unc_references() {
+        // Scheme-less "//host" (and backslash variants browsers normalize) navigate
+        // off-origin despite the allowlist; a single leading slash stays allowed.
+        assert_eq!(safe_href("//evil.example/x"), None);
+        assert_eq!(safe_href("\\\\evil.example\\x"), None);
+        assert_eq!(safe_href("/\\evil.example"), None);
+        assert_eq!(
+            safe_href("/relative/path").as_deref(),
+            Some("/relative/path")
+        );
     }
 }

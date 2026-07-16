@@ -597,7 +597,7 @@ fn render_attachment_status(attachment: &AttachmentRow) -> String {
         parts.push(format_file_size(file_size));
     }
     if let Some(duration_seconds) = attachment.duration_seconds {
-        parts.push(format!("{duration_seconds}s"));
+        parts.push(format_duration(duration_seconds));
     }
     match (attachment.width, attachment.height) {
         (Some(width), Some(height)) if width > 0 && height > 0 => {
@@ -645,12 +645,31 @@ fn attachment_title(attachment: &AttachmentRow) -> String {
 }
 
 fn format_file_size(bytes: i64) -> String {
+    // Match Telegram Desktop's FormatSizeText: one truncated decimal for KB/MB so the
+    // re-exported HTML round-trips back through the importer's size parser.
+    let bytes = bytes.max(0);
     if bytes >= 1024 * 1024 {
-        format!("{} MB", bytes / (1024 * 1024))
+        let tenths = bytes * 10 / (1024 * 1024);
+        format!("{}.{} MB", tenths / 10, tenths % 10)
     } else if bytes >= 1024 {
-        format!("{} KB", bytes / 1024)
+        let tenths = bytes * 10 / 1024;
+        format!("{}.{} KB", tenths / 10, tenths % 10)
     } else {
         format!("{bytes} B")
+    }
+}
+
+fn format_duration(seconds: i64) -> String {
+    // Match Telegram Desktop's FormatDurationText: H:MM:SS (hours only when present),
+    // minutes always two digits, so durations round-trip through the importer.
+    let seconds = seconds.max(0);
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+    let secs = seconds % 60;
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{secs:02}")
+    } else {
+        format!("{minutes:02}:{secs:02}")
     }
 }
 
@@ -998,6 +1017,21 @@ fn render_text_entity(entity: &TextEntity) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn file_size_uses_one_decimal_like_telegram() {
+        assert_eq!(format_file_size(7654605), "7.3 MB");
+        assert_eq!(format_file_size(1990000), "1.8 MB");
+        assert_eq!(format_file_size(12698), "12.4 KB");
+        assert_eq!(format_file_size(512), "512 B");
+    }
+
+    #[test]
+    fn duration_uses_colon_format_like_telegram() {
+        assert_eq!(format_duration(19), "00:19");
+        assert_eq!(format_duration(192), "03:12");
+        assert_eq!(format_duration(3700), "1:01:40");
+    }
 
     #[test]
     fn escapes_like_telegram_desktop_html() {
